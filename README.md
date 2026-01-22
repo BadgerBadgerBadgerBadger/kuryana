@@ -73,6 +73,12 @@ GET /id/{mydramalist-slug}/reviews
 GET /people/{people-id}
 ```
 
+- Get Character Info
+
+```sh
+GET /character/{character-id}
+```
+
 - Get seasonal drama
 
 ```sh

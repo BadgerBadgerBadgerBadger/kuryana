@@ -13,4 +13,4 @@ services:
         delay: 5s # Optional: delay between restart attempts
         window: 120s # Optional: time to wait after a restart to determine if it was successful
     ports:
-      - 8035:8000
+      - 8082:8000
