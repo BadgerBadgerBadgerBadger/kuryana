@@ -77,6 +77,17 @@ async def person(person_id: str, response: Response) -> Dict[str, Any]:
     return r
 
 
+@app.get("/character/{character_id}", tags=["Character"], summary="Get Character Info")
+async def character(character_id: str, response: Response) -> Dict[str, Any]:
+    """
+    Get character details by character ID.
+    """
+    code, r = await fetch_func(query=f"character/{character_id}", t="character")
+
+    response.status_code = code
+    return r
+
+
 @app.get("/dramalist/{user_id}")
 async def dramalist(user_id: str, response: Response) -> Dict[str, Any]:
     code, r = await fetch_func(query=f"dramalist/{user_id}", t="dramalist")

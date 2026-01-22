@@ -4,6 +4,7 @@ from typing import Any, Dict, List
 from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
+from bs4.element import Tag
 
 from app import MYDRAMALIST_WEBSITE
 from app.handlers.parser import BaseFetch
@@ -100,6 +101,45 @@ class FetchDrama(BaseFetch):
                         )
                     )
                 break
+
+        # Recommendations
+        self.info["recommendations"] = []
+        rec_container = container.find("div", class_="box-body details-recommendations")
+        if rec_container:
+            for rec_item in rec_container.find_all("div", class_="rec-item"):
+                rec_a = rec_item.find("a")
+                if rec_a:
+                    self.info["recommendations"].append({
+                        "title": rec_a.get("title", "").strip(),
+                        "slug": rec_a.get("href", "").strip(),
+                        "poster": self._get_poster(rec_item)
+                    })
+
+        # Where to Watch (WTS)
+        self.info["where_to_watch"] = []
+        wts_container = container.find("div", class_="box-body wts")
+        if wts_container:
+            for wts_item in wts_container.find_all("div", class_="m-b-sm"):
+                 # each item is col-xs-12 col-lg-4 m-b-sm
+                 # but find_all("div", class_="m-b-sm") might match inner items if nested?
+                 # content structure: row > col > row > col(img) + col(text)
+                 # Let's iterate over the immediate children of row if possible, or just find all platform links
+                 platform_a = wts_item.find("a", class_="text-primary")
+                 if platform_a:
+                     platform_name_tag = platform_a.find("b")
+                     platform_name = platform_name_tag.text.strip() if platform_name_tag else platform_a.text.strip()
+
+                     # The parent of the <a> div usually contains the note in the next sibling div
+                     # Structure: <div><a><b>Netflix</b></a></div> <div>Subscription (sub)</div>
+                     parent_div = platform_a.parent
+                     note_div = parent_div.find_next_sibling("div")
+                     note = note_div.text.strip() if note_div else ""
+
+                     self.info["where_to_watch"].append({
+                         "platform": platform_name,
+                         "link": urljoin(MYDRAMALIST_WEBSITE, platform_a.get("href", "")),
+                         "note": note
+                     })
 
     # get other info
     def _get_other_info(self) -> None:
@@ -234,6 +274,26 @@ class FetchPerson(BaseFetch):
 
             self.info["works"][j] = bare_works
 
+        # News / Articles
+        self.info["news"] = []
+        # Check for article-trending box similar to drama page
+        # It seems person page might use different structure or dynamic loading,
+        # but let's try to find 'article-trending' or similar if present in common layout
+        # In the provided person_page.html, it wasn't visible in the view.
+        # But we'll add generic extraction if we find the container.
+        news_container = container.find("div", class_="article-trending")
+        if news_container:
+             for article in news_container.find_all("article"):
+                 art_a = article.find("a")
+                 if art_a:
+                     art_title_span = article.find("span", class_="box-title")
+                     art_title = art_title_span.text.strip() if art_title_span else art_a.get("title", "").strip()
+                     self.info["news"].append({
+                         "title": art_title,
+                         "link": urljoin(MYDRAMALIST_WEBSITE, art_a.get("href", "")),
+                         "image": self._get_poster(article)
+                     })
+
     def _get(self) -> None:
         self._get_main_container()
         self._get_details(classname="list m-b-0")
@@ -286,10 +346,14 @@ class FetchCast(BaseFetch):
                 }
 
                 try:
+                    __role_elem = i.find("small")
                     __temp_cast_data["role"] = {
-                        "name": i.find("small").text.strip(),
+                        "name": __role_elem.text.strip(),
                         "type": i.find("small", class_="text-muted").text.strip(),
                     }
+                    __role_link = __role_elem.find("a")
+                    if __role_link:
+                        __temp_cast_data["role"]["slug"] = __role_link["href"].strip()
                 except Exception:
                     pass
 
@@ -703,10 +767,9 @@ class FetchEpisodes(BaseFetch):
             img = cover.find("img")["data-src"]
             link = urljoin(MYDRAMALIST_WEBSITE, cover.find("a")["href"])
 
-            rating = (
-                epi.find("div", class_="rating-panel m-b-0")
-                .find("div")
-                .get_text(strip=True)
+            rating_elem = epi.find("div", class_="rating-panel m-b-0")
+            rating = self._handle_rating(
+                rating_elem.find("div") if rating_elem else None
             )
 
             air_date: str | None = None
@@ -733,4 +796,85 @@ class FetchEpisodes(BaseFetch):
         return title_container.get_text(strip=True) if title_container else ""
 
     def _get(self):
+        self._get_main_container()
+
+
+class FetchCharacter(BaseFetch):
+    def __init__(self, soup: BeautifulSoup, query: str, code: int, ok: bool) -> None:
+        super().__init__(soup, query, code, ok)
+
+    def _get_main_container(self) -> None:
+        if self.soup is None:
+            return
+
+        container = self.soup.find("div", class_="app-body")
+        if container is None:
+            return
+
+        self._parse_name(container)
+
+        wiki_content = container.find("div", class_="wiki-content")
+        if not wiki_content:
+            return
+
+        self._parse_infobox(wiki_content)
+        self._parse_bio(wiki_content)
+
+    def _parse_name(self, container: Tag) -> None:
+        header = container.find("div", class_="box-header")
+        if header:
+            name_tag = header.find("h1")
+            self.info["name"] = name_tag.get_text(strip=True) if name_tag else ""
+        else:
+            self.info["name"] = ""
+
+    def _parse_infobox(self, wiki_content: Tag) -> None:
+        infobox = wiki_content.find("aside", class_="wiki-infobox")
+        if not infobox:
+            return
+
+        # POSTER
+        poster_img = infobox.find("img", class_="ib-poster")
+        self.info["poster"] = poster_img["src"] if poster_img else ""
+
+        # PORTRAYED BY
+        portrayed_div = infobox.find("div", class_="ib-portrayed-by")
+        if portrayed_div:
+            actor_link = portrayed_div.find("a")
+            if actor_link:
+                self.info["portrayed_by"] = {
+                    "name": actor_link.get_text(strip=True),
+                    "slug": actor_link["href"].strip(),
+                    "link": urljoin(MYDRAMALIST_WEBSITE, actor_link["href"].strip()),
+                }
+
+        # ATTRIBUTES
+        attributes = {}
+        sections = infobox.find_all("section", class_="ib-group")
+        for section in sections:
+            data_items = section.find_all("div", class_="ib-data")
+            for item in data_items:
+                label = item.find("h3", class_="ib-data-label")
+                value_div = item.find("div", class_="ib-data-value")
+                if label and value_div:
+                    key = (
+                        label.get_text(strip=True)
+                        .replace(":", "")
+                        .lower()
+                        .replace(" ", "_")
+                    )
+                    val_text = value_div.get_text(strip=True)
+                    attributes[key] = val_text
+
+        self.info["attributes"] = attributes
+
+    def _parse_bio(self, wiki_content: Tag) -> None:
+        paragraphs = wiki_content.find_all("p", recursive=False)
+        bio_text = ""
+        if paragraphs:
+            bio_text = "\n\n".join([p.get_text(strip=True) for p in paragraphs])
+
+        self.info["about"] = bio_text
+
+    def _get(self) -> None:
         self._get_main_container()

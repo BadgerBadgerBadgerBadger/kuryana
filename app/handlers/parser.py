@@ -176,13 +176,30 @@ class BaseFetch(Parser):
             # do nothing, if there was a problem
             pass
 
-    # rating handler, (since it could be N/A which is not convertable to float)
     def _handle_rating(
-        self, component: Union[Tag, NavigableString]
-    ) -> Union[str, float, Any]:
-        try:
-            return float(component.text)
-        except Exception:
-            pass
+        self, component: Union[Tag, NavigableString, None]
+    ) -> float | None:
+        """
+        Parse rating from HTML component.
 
-        return component.text
+        Args:
+            component: BeautifulSoup Tag containing rating text
+
+        Returns:
+            float: Parsed rating value (e.g., 8.5)
+            None: If rating is not available, "N/A", or unparseable
+
+        Note:
+            This method guarantees a consistent return type (float | None).
+            It will never return a string - unparseable values become None.
+        """
+        if component is None:
+            return None
+
+        try:
+            text = component.text.strip()
+            if not text or text.upper() == "N/A":
+                return None
+            return float(text)
+        except (ValueError, AttributeError):
+            return None
